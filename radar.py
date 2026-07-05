@@ -23,13 +23,17 @@ from meli_client import MeliClient
 BASE = os.path.dirname(os.path.abspath(__file__))
 # El CSV fuente tiene COSTOS de TireShop -> nunca va al repo (publico).
 # En el VPS vive junto al .env; localmente, en la carpeta ONLINE/ de Drive.
-CSV_FUENTE = os.environ.get(
-    "MELI_RADAR_CSV",
-    os.path.join(os.path.dirname(BASE), "Neumaticos_etapa1_margen_ML.csv"))
-if not os.path.exists(CSV_FUENTE):
-    _alt = os.path.expanduser("~/.config/meli-radar-uy/Neumaticos_etapa1_margen_ML.csv")
-    if os.path.exists(_alt):
-        CSV_FUENTE = _alt
+def _resolver_csv(env_var, nombre):
+    path = os.environ.get(env_var, os.path.join(os.path.dirname(BASE), nombre))
+    if not os.path.exists(path):
+        alt = os.path.expanduser(f"~/.config/meli-radar-uy/{nombre}")
+        if os.path.exists(alt):
+            return alt
+    return path
+
+
+CSV_FUENTE = _resolver_csv("MELI_RADAR_CSV", "Neumaticos_etapa1_margen_ML.csv")
+CSV_ACCESORIOS = _resolver_csv("MELI_RADAR_CSV_ACC", "Accesorios_etapa1_precios_ML.csv")
 
 MARCAS_PREMIUM = {
     "MICHELIN", "BRIDGESTONE", "PIRELLI", "GOODYEAR", "CONTINENTAL",
@@ -95,13 +99,15 @@ def unidades_kit(nombre):
 
 
 def cargar_skus():
-    """Lee el CSV fuente de TireShop (fuente de verdad de precios)."""
+    """Lee el CSV fuente de neumáticos de TireShop (fuente de verdad de precios)."""
     skus = []
     with open(CSV_FUENTE) as f:
         for r in csv.DictReader(f):
             medida = r["medida"].strip()
             skus.append({
                 "sku": f"NEU-{r['codigo_tireshop']}",
+                "familia": "neumatico",
+                "moneda": "USD",
                 "medida": medida,
                 "segmento": r["segmento"],
                 "marca_referencial": r["marca_referencial"],
@@ -115,16 +121,87 @@ def cargar_skus():
     return skus
 
 
+# --- accesorios (tazas, tornillos, tuercas, válvulas; precios en $U) ---
+
+STOPWORDS_ACC = {"RUEDA", "RUEDAS", "DE", "P/", "PACK", "C/", "CROMADOS",
+                 "CROMADAS", "BLACK", "ARANDELA", "NEUMATICOS", "EXAGONO"}
+
+
+def _normalizar_medida_acc(texto):
+    """12X1,50 / 12x1.50 / 12 x 1,5 -> 12X1.5 (para comparar tornillos/tuercas)."""
+    t = texto.upper().replace(",", ".").replace(" ", "")
+    return re.sub(r"(\d\.\d)0\b", r"\1", t)
+
+
+def tokens_accesorio(articulo):
+    """Tipo (TAZA/TORNILLO/...) + tokens distintivos (modelos, medidas, rodado).
+    Tokeniza ANTES de normalizar: la normalización quita espacios y si se
+    aplica primero deja un token gigante inservible."""
+    partes = re.split(r"[\s/\-]+", articulo.upper().replace('"', ""))
+    partes = [_normalizar_medida_acc(p) for p in partes if p]
+    tipo = partes[0].rstrip("S")  # TAZAS -> TAZA
+    resto = [p for p in partes[1:] if p and p not in STOPWORDS_ACC]
+    return tipo, resto
+
+
+def relevancia_accesorio(articulo, nombre):
+    """Relevante si el nombre trae el tipo de pieza y algún token distintivo."""
+    tipo, distintivos = tokens_accesorio(articulo)
+    n = _normalizar_medida_acc(nombre)
+    if tipo not in n:
+        return False
+    return any(tok in n for tok in distintivos) if distintivos else True
+
+
+def cargar_accesorios():
+    """Lee el CSV de accesorios (generado desde el xlsx de precios de junio)."""
+    if not os.path.exists(CSV_ACCESORIOS):
+        print(f"  [sin CSV de accesorios en {CSV_ACCESORIOS} — solo neumáticos]")
+        return []
+    skus = []
+    with open(CSV_ACCESORIOS) as f:
+        for r in csv.DictReader(f):
+            articulo = r["articulo"].strip()
+            tipo, distintivos = tokens_accesorio(articulo)
+            keywords = " ".join([tipo.lower()] + [d.lower() for d in distintivos][:3])
+            skus.append({
+                "sku": r["sku"],
+                "familia": "accesorio",
+                "moneda": "UYU",
+                "medida": articulo,  # el articulo cumple el rol de "medida" en tablas
+                "segmento": r["categoria"],
+                "marca_referencial": "",
+                "costo_usd": float(r["costo_uy"]),          # en $U (nombre legado)
+                "precio_final_usd": float(r["precio_sugerido_uy"]),  # en $U
+                "mercado_min_usd": None,
+                "mercado_tipico_usd": None,
+                "prioridad": r["prioridad"],
+                "keywords": keywords,
+            })
+    return skus
+
+
 def capturar(filtro_medidas=None):
     cliente = MeliClient()
     con = conectar()
     hoy = datetime.date.today().isoformat()
 
+    # Los accesorios NO entran a la corrida por default: el catalogo de ML
+    # casi no los cubre (los sellers usan publicaciones sin catalogar) y la
+    # API daria veredictos basura. Fuente pendiente: scraper browser (fase 2).
+    # Se fuerzan con: python3 radar.py accesorios
     skus = cargar_skus()
     if filtro_medidas:
-        objetivo = {normalizar(m) for m in filtro_medidas}
-        skus = [s for s in skus if normalizar(s["medida"]) in objetivo]
-    print(f"Corrida {hoy} — {len(skus)} medidas\n")
+        if [f for f in filtro_medidas if f.lower() == "accesorios"]:
+            skus = cargar_accesorios()
+        elif [f for f in filtro_medidas if f.lower() == "neumaticos"]:
+            pass  # ya son solo neumaticos
+        else:
+            skus += cargar_accesorios()
+            objetivo = {normalizar(m) for m in filtro_medidas}
+            skus = [s for s in skus
+                    if normalizar(s["medida"]) in objetivo or s["sku"] in filtro_medidas]
+    print(f"Corrida {hoy} — {len(skus)} SKUs\n")
 
     total_ofertas = 0
     for s in skus:
@@ -134,11 +211,18 @@ def capturar(filtro_medidas=None):
         relevantes, ofertas_sku = 0, 0
         for pos, p in enumerate(productos, start=1):
             nombre = p.get("name", "")
-            clasif = clasificar(s["medida"], nombre)
+            if s["familia"] == "accesorio":
+                clasif = ("equivalente"
+                          if relevancia_accesorio(s["medida"], nombre)
+                          else "no_relevante")
+            else:
+                clasif = clasificar(s["medida"], nombre)
             if clasif == "no_relevante":
                 continue
             relevantes += 1
-            unidades = unidades_kit(nombre)
+            # los accesorios se venden por juego/pack (igual que nuestros
+            # precios): NO se convierte a unitario, solo los neumaticos
+            unidades = unidades_kit(nombre) if s["familia"] == "neumatico" else 1
             for it in cliente.ofertas_de_producto(p["id"]):
                 precio = it.get("price")
                 if precio and unidades > 1:
@@ -163,7 +247,7 @@ def capturar(filtro_medidas=None):
                 ofertas_sku += 1
         con.commit()  # checkpoint por SKU: si algo corta, lo hecho queda
         total_ofertas += ofertas_sku
-        print(f"  {s['medida']:<12} [{s['prioridad']:<10}] "
+        print(f"  {s['medida'][:32]:<32} [{s['prioridad']:<10}] "
               f"{total:>5} en catálogo | {relevantes:>2} relevantes | "
               f"{ofertas_sku:>3} ofertas")
 

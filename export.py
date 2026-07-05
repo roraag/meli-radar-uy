@@ -75,6 +75,7 @@ def exportar():
         ws2.column_dimensions[col].width = ancho
     ws2.freeze_panes = "A2"
 
+    os.makedirs(os.path.join(BASE, "outputs"), exist_ok=True)
     path = os.path.join(BASE, "outputs", f"TireShop - Radar ML {fecha}.xlsx")
     wb.save(path)
     print(f"Exportado: {path}")

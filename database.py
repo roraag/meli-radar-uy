@@ -29,6 +29,12 @@ def conectar():
             prioridad TEXT,
             keywords TEXT
         )""")
+    # migracion suave: familia (neumatico/accesorio) y moneda esperada
+    for col, default in (("familia", "'neumatico'"), ("moneda", "'USD'")):
+        try:
+            con.execute(f"ALTER TABLE products ADD COLUMN {col} TEXT DEFAULT {default}")
+        except sqlite3.OperationalError:
+            pass  # ya existe
     con.execute("""
         CREATE TABLE IF NOT EXISTS snapshots (
             fecha_captura TEXT NOT NULL,          -- YYYY-MM-DD
@@ -53,11 +59,12 @@ def conectar():
 def guardar_producto(con, p):
     con.execute("""INSERT OR REPLACE INTO products
         (sku, medida, segmento, marca_referencial, costo_usd, precio_final_usd,
-         mercado_min_usd, mercado_tipico_usd, prioridad, keywords)
-        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+         mercado_min_usd, mercado_tipico_usd, prioridad, keywords, familia, moneda)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (p["sku"], p["medida"], p["segmento"], p["marca_referencial"],
          p["costo_usd"], p["precio_final_usd"], p["mercado_min_usd"],
-         p["mercado_tipico_usd"], p["prioridad"], p["keywords"]))
+         p["mercado_tipico_usd"], p["prioridad"], p["keywords"],
+         p.get("familia", "neumatico"), p.get("moneda", "USD")))
 
 
 def guardar_snapshot(con, s):

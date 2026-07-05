@@ -203,6 +203,7 @@ def generar():
             .replace("__RANKING__", json.dumps(filas, ensure_ascii=False))
             .replace("__OFERTAS__", json.dumps(ofertas_json, ensure_ascii=False)))
 
+    os.makedirs(os.path.join(BASE, "outputs"), exist_ok=True)
     path = os.path.join(BASE, "outputs", f"TireShop - Radar ML {fecha}.html")
     with open(path, "w") as f:
         f.write(html)

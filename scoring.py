@@ -28,18 +28,20 @@ def ultima_fecha(con):
 def score_sku(con, sku, fecha):
     prod = con.execute(
         "SELECT medida, segmento, prioridad, costo_usd, precio_final_usd, "
-        "mercado_min_usd, mercado_tipico_usd FROM products WHERE sku=?",
-        (sku,)).fetchone()
-    medida, segmento, prioridad, costo, nuestro, mkt_min_jul, mkt_tip_jul = prod
+        "mercado_min_usd, mercado_tipico_usd, familia, moneda "
+        "FROM products WHERE sku=?", (sku,)).fetchone()
+    (medida, segmento, prioridad, costo, nuestro, mkt_min_jul, mkt_tip_jul,
+     familia, moneda) = prod
 
     filas = con.execute(
         "SELECT clasificacion, price, currency_id, seller_id, free_shipping, "
         "marca_detectada, catalog_product_id, product_name "
         "FROM snapshots WHERE sku=? AND fecha_captura=?", (sku, fecha)).fetchall()
 
-    equiv = [f for f in filas if f[0] == "equivalente" and f[2] == "USD" and f[1]]
-    premium = [f for f in filas if f[0] == "premium" and f[2] == "USD" and f[1]]
-    otras_monedas = [f for f in filas if f[2] != "USD"]
+    # se compara solo en la moneda esperada del rubro: USD neumaticos, $U accesorios
+    equiv = [f for f in filas if f[0] == "equivalente" and f[2] == moneda and f[1]]
+    premium = [f for f in filas if f[0] == "premium" and f[2] == moneda and f[1]]
+    otras_monedas = [f for f in filas if f[2] != moneda]
 
     # anti-outlier: kits x4 encubiertos u ofertas absurdas. Un precio a mas
     # de 2,5x la mediana del set equivalente no entra al promedio.
@@ -51,7 +53,8 @@ def score_sku(con, sku, fecha):
         n_outliers = len(precios) - len(depurados)
         precios = depurados
     r = {
-        "sku": sku, "medida": medida, "segmento": segmento,
+        "sku": sku, "medida": medida, "segmento": segmento, "familia": familia,
+        "moneda": moneda,
         "prioridad": prioridad, "costo_usd": costo, "precio_final_usd": nuestro,
         "mercado_min_jul": mkt_min_jul, "mercado_tipico_jul": mkt_tip_jul,
         "n_ofertas_equiv": len(equiv),
