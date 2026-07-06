@@ -101,10 +101,12 @@ PLANTILLA = """<!DOCTYPE html>
     <h2>Best-sellers ML UY + precio en Brasil</h2>
     <div class="sub"><b>El ranking lo arma MercadoLibre</b> con sus datos internos de ventas (API highlights,
     captura <span id="fecha-opo"></span>): publica el orden — la columna # — pero NO la cifra de ventas de cada
-    producto (ese dato no existe públicamente). El equivalente en Brasil se busca <b>por nombre</b>: es un match
-    aproximado con falsos positivos frecuentes — validar SIEMPRE con los dos links antes de decidir. El precio BR
-    es el de Brasil tal cual (sin flete ni impuestos). De Brasil no se traen neumáticos: por eso su tabla no tiene
-    columnas BR.</div>
+    producto (ese dato no existe públicamente). Cuando ML no expone el precio de la publicación exacta, se muestra
+    un <b>precio de referencia</b> (tag "ref."): el equivalente más barato del catálogo UY matcheado por nombre —
+    el link del precio lleva a ese producto de referencia. El equivalente en Brasil se busca igual, <b>por
+    nombre</b>: match aproximado con falsos positivos — validar SIEMPRE con los links antes de decidir. El precio
+    BR es el de Brasil tal cual (sin flete ni impuestos). De Brasil no se traen neumáticos: por eso su tabla no
+    tiene columnas BR.</div>
     <div id="cuerpo-oportunidades"></div>
   </section>
 
@@ -242,7 +244,17 @@ function pintarOportunidades(){
         '<th>Equivalente BR</th><th class="num">Precio BR</th></tr></thead>';
     const tb = document.createElement('tbody');
     for (const f of OPORTUNIDADES.filas.filter(x=>x.cat===cat)){
-      const uy = f.precio_uy!==null ? esc(f.moneda_uy)+' '+f.precio_uy : 's/precio';
+      let uy;
+      if (f.precio_uy!==null){
+        uy = esc(f.moneda_uy)+' '+f.precio_uy;
+      } else if (f.precio_uy_ref!==null){
+        const p = esc(f.moneda_uy_ref)+' '+f.precio_uy_ref;
+        uy = (f.uy_ref_link ? '<a href="'+esc(f.uy_ref_link)+'" target="_blank" title="'+
+              esc(f.uy_ref_nombre)+'">'+p+'</a>' : p) +
+             ' <span class="tag aprox">ref.</span>';
+      } else {
+        uy = 's/precio';
+      }
       const tr = document.createElement('tr');
       let celdas = '<td class="pos">'+f.pos+'</td>'+
         '<td><a href="'+esc(f.link_uy)+'" target="_blank">'+esc(f.nombre)+'</a></td>'+
@@ -313,21 +325,26 @@ def datos_oportunidades():
     try:
         fecha = con.execute(
             "SELECT MAX(fecha_captura) FROM oportunidades").fetchone()[0]
+        if not fecha:
+            con.close()
+            return None
+        rows = con.execute(
+            "SELECT categoria_nombre, posicion, nombre, precio_uy, moneda_uy, "
+            "link_uy, precio_br, match_br_id, match_br_nombre, "
+            "precio_uy_ref, moneda_uy_ref, match_uy_id, match_uy_nombre "
+            "FROM oportunidades WHERE fecha_captura=?", (fecha,)).fetchall()
     except sqlite3.OperationalError:
-        fecha = None
-    if not fecha:
         con.close()
-        return None
-    rows = con.execute(
-        "SELECT categoria_nombre, posicion, nombre, precio_uy, moneda_uy, "
-        "link_uy, precio_br, match_br_id, match_br_nombre "
-        "FROM oportunidades WHERE fecha_captura=?", (fecha,)).fetchall()
+        return None  # tabla vieja sin migrar o inexistente
     con.close()
     filas = [{
         "cat": r[0], "pos": r[1], "nombre": r[2], "precio_uy": r[3],
         "moneda_uy": r[4], "link_uy": r[5], "precio_br": r[6],
         "br_link": ("https://www.mercadolibre.com.br/p/" + r[7]) if r[7] else None,
         "br_nombre": r[8],
+        "precio_uy_ref": r[9], "moneda_uy_ref": r[10],
+        "uy_ref_link": ("https://www.mercadolibre.com.uy/p/" + r[11]) if r[11] else None,
+        "uy_ref_nombre": r[12],
     } for r in rows]
     filas.sort(key=lambda f: (ORDEN_CATEGORIAS.get(f["cat"], 9), f["pos"] or 999))
     return {"fecha": fecha, "filas": filas}

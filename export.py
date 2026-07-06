@@ -80,15 +80,18 @@ def exportar():
     if opo:
         ws3 = wb.create_sheet("Oportunidades")
         ws3.append(["Categoria", "Pos.", "Producto UY", "Precio UY", "Moneda",
-                    "Link UY", "Precio BR (BRL)", "Match BR (aprox. - validar)",
-                    "Link BR"])
+                    "Precio UY ref.", "Moneda ref.",
+                    "Producto ref. UY (aprox. - validar)", "Link UY",
+                    "Precio BR (BRL)", "Match BR (aprox. - validar)", "Link BR"])
         for c in ws3[1]:
             c.font = Font(bold=True)
         for f in opo["filas"]:
             ws3.append([f["cat"], f["pos"], f["nombre"], f["precio_uy"],
-                        f["moneda_uy"], f["link_uy"], f["precio_br"],
+                        f["moneda_uy"], f["precio_uy_ref"], f["moneda_uy_ref"],
+                        f["uy_ref_nombre"], f["link_uy"], f["precio_br"],
                         f["br_nombre"], f["br_link"]])
-        for col, ancho in zip("ABCDEFGHI", (26, 6, 50, 10, 8, 40, 13, 40, 40)):
+        for col, ancho in zip("ABCDEFGHIJKL",
+                              (26, 6, 50, 10, 8, 12, 10, 40, 40, 13, 40, 40)):
             ws3.column_dimensions[col].width = ancho
         ws3.freeze_panes = "A2"
 
