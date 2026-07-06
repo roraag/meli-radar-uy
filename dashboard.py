@@ -5,9 +5,12 @@ Los datos van embebidos como JSON (placeholders + .replace, nunca f-strings
 con JS adentro). Filtros por segmento / prioridad / veredicto en el cliente.
 """
 
+import csv
 import json
 import os
+import sqlite3
 
+from database import conectar
 from scoring import ofertas_detalle, ranking
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -56,6 +59,14 @@ PLANTILLA = """<!DOCTYPE html>
   .det-inner th { background:#444; }
   .det-inner a { color:#0d47a1; text-decoration:none; }
   .nota { margin-top:16px; font-size:12px; color:var(--gris); line-height:1.5; }
+  .seccion { margin-top:38px; }
+  .seccion h2 { font-size:17px; margin-bottom:4px; }
+  .seccion h3 { font-size:14px; margin:20px 0 8px; }
+  .seccion .sub { font-size:12px; color:var(--gris); line-height:1.5; margin-bottom:12px; }
+  .seccion a { color:#0d47a1; text-decoration:none; }
+  .seccion table { margin-bottom:6px; }
+  .pos { color:var(--gris); font-weight:700; }
+  .aprox { background:#fff3e0; color:#e65100; }
   @media (max-width:700px){ .oculta-movil { display:none; } }
 </style>
 </head>
@@ -85,10 +96,45 @@ PLANTILLA = """<!DOCTYPE html>
   Cobertura BAJA = menos de 3 ofertas equivalentes en el catálogo de ML: el promedio es poco confiable, validar a mano.
   Fuente: API de catálogo de MercadoLibre Uruguay (products/search + items). Los productos sin oferta activa no aparecen.
   Click en una fila para ver las ofertas relevadas y sus links.</p>
+
+  <section class="seccion" id="sec-oportunidades" hidden>
+    <h2>Best-sellers ML UY + precio en Brasil</h2>
+    <div class="sub">Ranking oficial de más vendidos por categoría (API highlights, captura <span id="fecha-opo"></span>).
+    El equivalente en Brasil se busca <b>por nombre</b>: es un match aproximado con falsos positivos frecuentes —
+    validar SIEMPRE con los dos links antes de decidir. El precio BR es el de Brasil tal cual (sin flete ni impuestos).
+    Regla del negocio: de Brasil no se traen neumáticos.</div>
+    <div id="cuerpo-oportunidades"></div>
+  </section>
+
+  <section class="seccion" id="sec-browser" hidden>
+    <h2>Datos de browser (scraper Mac)</h2>
+    <div class="sub">Relevado con browser desde la Mac (corrida manual; fecha propia: <span id="fecha-browser"></span> —
+    puede ser anterior a la captura API de arriba). Cubre lo que el catálogo no ve: los accesorios (publicaciones sin
+    catalogar) y la señal de demanda "+X vendidos" del detalle.</div>
+    <h3>Accesorios — precios de la competencia (por unidad)</h3>
+    <table>
+      <thead><tr><th>SKU</th><th>Producto TireShop</th><th class="num">Ofertas</th>
+      <th class="num">Mín.</th><th class="num">Promedio</th><th>Más barata de la competencia</th></tr></thead>
+      <tbody id="cuerpo-accesorios"></tbody>
+    </table>
+    <h3>Señal de demanda — publicaciones con más vendidos</h3>
+    <table>
+      <thead><tr><th>Medida / producto</th><th>Publicación</th>
+      <th class="num">Precio unit.</th><th class="num">Vendidos</th></tr></thead>
+      <tbody id="cuerpo-vendidos"></tbody>
+    </table>
+  </section>
 </div>
 <script>
 const RANKING = __RANKING__;
 const OFERTAS = __OFERTAS__;
+const OPORTUNIDADES = __OPORTUNIDADES__;
+const BROWSER = __BROWSER__;
+
+function esc(s){
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 function kpis(filas){
   const tot = filas.length;
@@ -176,8 +222,68 @@ function pintar(){
   }
 }
 
+function pintarOportunidades(){
+  if (!OPORTUNIDADES || !OPORTUNIDADES.filas.length) return;
+  document.getElementById('sec-oportunidades').hidden = false;
+  document.getElementById('fecha-opo').textContent = OPORTUNIDADES.fecha;
+  const cont = document.getElementById('cuerpo-oportunidades');
+  const cats = [...new Set(OPORTUNIDADES.filas.map(f=>f.cat))];
+  for (const cat of cats){
+    const h = document.createElement('h3');
+    h.textContent = cat + (cat.indexOf('Neum')>=0 ? ' — ranking UY informativo (sin match BR por regla)' : '');
+    cont.appendChild(h);
+    const t = document.createElement('table');
+    t.innerHTML = '<thead><tr><th>#</th><th>Producto (UY)</th><th class="num">Precio UY</th>'+
+                  '<th>Equivalente BR</th><th class="num">Precio BR</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const f of OPORTUNIDADES.filas.filter(x=>x.cat===cat)){
+      const uy = f.precio_uy!==null ? esc(f.moneda_uy)+' '+f.precio_uy : 's/precio';
+      const br = f.precio_br!==null
+        ? '<a href="'+esc(f.br_link)+'" target="_blank">'+esc(f.br_nombre)+'</a> '+
+          '<span class="tag aprox">match aprox. — validar</span>'
+        : '-';
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td class="pos">'+f.pos+'</td>'+
+        '<td><a href="'+esc(f.link_uy)+'" target="_blank">'+esc(f.nombre)+'</a></td>'+
+        '<td class="num">'+uy+'</td>'+
+        '<td>'+br+'</td>'+
+        '<td class="num">'+(f.precio_br!==null ? 'BRL '+f.precio_br : '-')+'</td>';
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    cont.appendChild(t);
+  }
+}
+
+function pintarBrowser(){
+  if (!BROWSER) return;
+  document.getElementById('sec-browser').hidden = false;
+  document.getElementById('fecha-browser').textContent = BROWSER.fecha;
+  const ta = document.getElementById('cuerpo-accesorios');
+  for (const a of BROWSER.accesorios){
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>'+esc(a.sku)+'</td><td>'+esc(a.medida)+'</td>'+
+      '<td class="num">'+a.n+'</td>'+
+      '<td class="num">'+esc(a.moneda)+' '+a.minimo+'</td>'+
+      '<td class="num">'+esc(a.moneda)+' '+a.promedio+'</td>'+
+      '<td><a href="'+esc(a.mejor_link)+'" target="_blank">'+esc(a.mejor_titulo)+'</a></td>';
+    ta.appendChild(tr);
+  }
+  const tv = document.getElementById('cuerpo-vendidos');
+  for (const v of BROWSER.vendidos){
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td><b>'+esc(v.medida)+'</b></td>'+
+      '<td><a href="'+esc(v.link)+'" target="_blank">'+esc(v.titulo)+'</a></td>'+
+      '<td class="num">'+esc(v.moneda)+' '+v.precio_unitario+'</td>'+
+      '<td class="num"><b>+'+v.vendidos+'</b></td>';
+    tv.appendChild(tr);
+  }
+}
+
 opciones();
 pintar();
+pintarOportunidades();
+pintarBrowser();
 </script>
 </body>
 </html>
@@ -185,6 +291,80 @@ pintar();
 
 
 CAMPOS_PRIVADOS = ("costo_usd", "margen_bruto_usd")  # nunca al HTML publicado
+
+# orden de presentacion de las categorias de oportunidades (nuestro rubro primero)
+ORDEN_CATEGORIAS = {"Neumaticos": 0, "Acc. Vehiculos (general)": 1,
+                    "Acc. de Auto y Camioneta": 2, "Repuestos Autos y Camionetas": 3}
+
+
+def datos_oportunidades():
+    """Best-sellers UY + match Brasil (tabla oportunidades, ultima captura).
+    Devuelve None si la tabla no existe o esta vacia (el cron del VPS puede
+    correr antes que oportunidades.py alguna vez)."""
+    con = conectar()
+    try:
+        fecha = con.execute(
+            "SELECT MAX(fecha_captura) FROM oportunidades").fetchone()[0]
+    except sqlite3.OperationalError:
+        fecha = None
+    if not fecha:
+        con.close()
+        return None
+    rows = con.execute(
+        "SELECT categoria_nombre, posicion, nombre, precio_uy, moneda_uy, "
+        "link_uy, precio_br, match_br_id, match_br_nombre "
+        "FROM oportunidades WHERE fecha_captura=?", (fecha,)).fetchall()
+    con.close()
+    filas = [{
+        "cat": r[0], "pos": r[1], "nombre": r[2], "precio_uy": r[3],
+        "moneda_uy": r[4], "link_uy": r[5], "precio_br": r[6],
+        "br_link": ("https://www.mercadolibre.com.br/p/" + r[7]) if r[7] else None,
+        "br_nombre": r[8],
+    } for r in rows]
+    filas.sort(key=lambda f: (ORDEN_CATEGORIAS.get(f["cat"], 9), f["pos"] or 999))
+    return {"fecha": fecha, "filas": filas}
+
+
+def datos_browser():
+    """Resumen del CSV del scraper Mac (docs/data/browser.csv). La fecha es
+    propia del scraper (corrida manual): puede diferir de la captura API.
+    Devuelve None si el CSV todavia no llego al repo."""
+    path = os.path.join(BASE, "docs", "data", "browser.csv")
+    if not os.path.exists(path):
+        return None
+    with open(path, newline="") as f:
+        filas = list(csv.DictReader(f))
+    if not filas:
+        return None
+    fecha = max(f["fecha_captura"] for f in filas)
+
+    # accesorios: min/promedio del precio unitario por SKU, en la moneda
+    # dominante del SKU (si un listado mezcla USD y UYU, gana la mayoritaria)
+    por_sku = {}
+    for f in filas:
+        if f["familia"] == "accesorio" and f["clasificacion"] == "equivalente":
+            por_sku.setdefault(f["sku"], []).append(f)
+    accesorios = []
+    for sku, items in sorted(por_sku.items()):
+        monedas = [i["moneda"] for i in items]
+        moneda = max(set(monedas), key=monedas.count)
+        mismos = [i for i in items if i["moneda"] == moneda]
+        precios = [float(i["precio_unitario"]) for i in mismos]
+        mejor = min(mismos, key=lambda i: float(i["precio_unitario"]))
+        accesorios.append({
+            "sku": sku, "medida": items[0]["medida"], "n": len(mismos),
+            "moneda": moneda, "minimo": round(min(precios)),
+            "promedio": round(sum(precios) / len(precios)),
+            "mejor_titulo": mejor["titulo"], "mejor_link": mejor["link"],
+        })
+
+    vendidos = [{
+        "medida": f["medida"], "titulo": f["titulo"],
+        "precio_unitario": float(f["precio_unitario"]), "moneda": f["moneda"],
+        "vendidos": int(f["vendidos"]), "link": f["link"],
+    } for f in filas if f["vendidos"]]
+    vendidos.sort(key=lambda v: -v["vendidos"])
+    return {"fecha": fecha, "accesorios": accesorios, "vendidos": vendidos[:20]}
 
 
 def generar():
@@ -201,7 +381,11 @@ def generar():
     html = (PLANTILLA
             .replace("__FECHA__", fecha)
             .replace("__RANKING__", json.dumps(filas, ensure_ascii=False))
-            .replace("__OFERTAS__", json.dumps(ofertas_json, ensure_ascii=False)))
+            .replace("__OFERTAS__", json.dumps(ofertas_json, ensure_ascii=False))
+            .replace("__OPORTUNIDADES__",
+                     json.dumps(datos_oportunidades(), ensure_ascii=False))
+            .replace("__BROWSER__",
+                     json.dumps(datos_browser(), ensure_ascii=False)))
 
     os.makedirs(os.path.join(BASE, "outputs"), exist_ok=True)
     path = os.path.join(BASE, "outputs", f"TireShop - Radar ML {fecha}.html")

@@ -12,7 +12,13 @@ cd "$REPO"
 
 echo "=== radar $(date '+%Y-%m-%d %H:%M') ==="
 
+# traer lo que haya pusheado la Mac (docs/data/browser.csv del scraper);
+# sin esto el push de abajo rompe apenas el remoto tenga commits nuevos
+/usr/bin/git pull --rebase origin main
+
 /usr/bin/python3 radar.py
+# best-sellers UY + match BR; si highlights falla un dia, el radar sale igual
+/usr/bin/python3 oportunidades.py || echo "oportunidades fallo — sigo sin esa seccion"
 /usr/bin/python3 dashboard.py --publicar
 
 /usr/bin/git add docs/

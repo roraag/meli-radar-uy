@@ -11,6 +11,7 @@ import os
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from dashboard import datos_oportunidades
 from scoring import ofertas_detalle, ranking
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -74,6 +75,22 @@ def exportar():
     for col, ancho in zip("ABCDEFGHIJ", (11, 12, 12, 12, 50, 9, 8, 12, 11, 42)):
         ws2.column_dimensions[col].width = ancho
     ws2.freeze_panes = "A2"
+
+    opo = datos_oportunidades()
+    if opo:
+        ws3 = wb.create_sheet("Oportunidades")
+        ws3.append(["Categoria", "Pos.", "Producto UY", "Precio UY", "Moneda",
+                    "Link UY", "Precio BR (BRL)", "Match BR (aprox. - validar)",
+                    "Link BR"])
+        for c in ws3[1]:
+            c.font = Font(bold=True)
+        for f in opo["filas"]:
+            ws3.append([f["cat"], f["pos"], f["nombre"], f["precio_uy"],
+                        f["moneda_uy"], f["link_uy"], f["precio_br"],
+                        f["br_nombre"], f["br_link"]])
+        for col, ancho in zip("ABCDEFGHI", (26, 6, 50, 10, 8, 40, 13, 40, 40)):
+            ws3.column_dimensions[col].width = ancho
+        ws3.freeze_panes = "A2"
 
     os.makedirs(os.path.join(BASE, "outputs"), exist_ok=True)
     path = os.path.join(BASE, "outputs", f"TireShop - Radar ML {fecha}.xlsx")
