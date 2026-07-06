@@ -82,10 +82,12 @@
 
   <section class="seccion" id="sec-oportunidades" hidden>
     <h2>Best-sellers ML UY + precio en Brasil</h2>
-    <div class="sub">Ranking oficial de más vendidos por categoría (API highlights, captura <span id="fecha-opo"></span>).
-    El equivalente en Brasil se busca <b>por nombre</b>: es un match aproximado con falsos positivos frecuentes —
-    validar SIEMPRE con los dos links antes de decidir. El precio BR es el de Brasil tal cual (sin flete ni impuestos).
-    Regla del negocio: de Brasil no se traen neumáticos.</div>
+    <div class="sub"><b>El ranking lo arma MercadoLibre</b> con sus datos internos de ventas (API highlights,
+    captura <span id="fecha-opo"></span>): publica el orden — la columna # — pero NO la cifra de ventas de cada
+    producto (ese dato no existe públicamente). El equivalente en Brasil se busca <b>por nombre</b>: es un match
+    aproximado con falsos positivos frecuentes — validar SIEMPRE con los dos links antes de decidir. El precio BR
+    es el de Brasil tal cual (sin flete ni impuestos). De Brasil no se traen neumáticos: por eso su tabla no tiene
+    columnas BR.</div>
     <div id="cuerpo-oportunidades"></div>
   </section>
 
@@ -212,25 +214,31 @@ function pintarOportunidades(){
   const cont = document.getElementById('cuerpo-oportunidades');
   const cats = [...new Set(OPORTUNIDADES.filas.map(f=>f.cat))];
   for (const cat of cats){
+    const esNeum = cat.indexOf('Neum')>=0;  // neumaticos: sin columnas BR (no se traen de Brasil)
     const h = document.createElement('h3');
-    h.textContent = cat + (cat.indexOf('Neum')>=0 ? ' — ranking UY informativo (sin match BR por regla)' : '');
+    h.textContent = esNeum ? 'Neumáticos — los más vendidos según MercadoLibre' : cat;
     cont.appendChild(h);
     const t = document.createElement('table');
-    t.innerHTML = '<thead><tr><th>#</th><th>Producto (UY)</th><th class="num">Precio UY</th>'+
-                  '<th>Equivalente BR</th><th class="num">Precio BR</th></tr></thead>';
+    t.innerHTML = esNeum
+      ? '<thead><tr><th>#</th><th>Producto (UY)</th><th class="num">Precio UY</th></tr></thead>'
+      : '<thead><tr><th>#</th><th>Producto (UY)</th><th class="num">Precio UY</th>'+
+        '<th>Equivalente BR</th><th class="num">Precio BR</th></tr></thead>';
     const tb = document.createElement('tbody');
     for (const f of OPORTUNIDADES.filas.filter(x=>x.cat===cat)){
       const uy = f.precio_uy!==null ? esc(f.moneda_uy)+' '+f.precio_uy : 's/precio';
-      const br = f.precio_br!==null
-        ? '<a href="'+esc(f.br_link)+'" target="_blank">'+esc(f.br_nombre)+'</a> '+
-          '<span class="tag aprox">match aprox. — validar</span>'
-        : '-';
       const tr = document.createElement('tr');
-      tr.innerHTML = '<td class="pos">'+f.pos+'</td>'+
+      let celdas = '<td class="pos">'+f.pos+'</td>'+
         '<td><a href="'+esc(f.link_uy)+'" target="_blank">'+esc(f.nombre)+'</a></td>'+
-        '<td class="num">'+uy+'</td>'+
-        '<td>'+br+'</td>'+
-        '<td class="num">'+(f.precio_br!==null ? 'BRL '+f.precio_br : '-')+'</td>';
+        '<td class="num">'+uy+'</td>';
+      if (!esNeum){
+        const br = f.precio_br!==null
+          ? '<a href="'+esc(f.br_link)+'" target="_blank">'+esc(f.br_nombre)+'</a> '+
+            '<span class="tag aprox">match aprox. — validar</span>'
+          : '-';
+        celdas += '<td>'+br+'</td>'+
+          '<td class="num">'+(f.precio_br!==null ? 'BRL '+f.precio_br : '-')+'</td>';
+      }
+      tr.innerHTML = celdas;
       tb.appendChild(tr);
     }
     t.appendChild(tb);
